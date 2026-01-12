@@ -91,7 +91,9 @@ class Plugin_Favorites_Manager {
             '<a href="#" class="plugin-favorite-link %s" data-plugin="%s" title="%s">%s</a>',
             esc_attr($class),
             esc_attr($plugin_file),
-            $is_favorite ? esc_attr__('Remove from favorites', 'plugin-favorites') : esc_attr__('Add to favorites', 'plugin-favorites'),
+            $is_favorite
+                ? esc_attr__('Remove from favorites', 'plugin-favorites')
+                : esc_attr__('Add to favorites', 'plugin-favorites'),
             $star_icon
         );
         
