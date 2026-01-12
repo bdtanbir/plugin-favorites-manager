@@ -1,7 +1,7 @@
 <?php
 /**
  * Plugin Name: Plugin Favorites Manager
- * Plugin URI: https://example.com/plugin-favorites
+ * Plugin URI: https://github.com/bdtanbir/plugin-favorites-manager
  * Description: Mark plugins as favorites for quick access with a custom filter tab
  * Version: 1.0.0
  * Author: Tanbir Ahmod
@@ -34,10 +34,7 @@ class Plugin_Favorites_Manager {
         
         // Handle AJAX toggle favorite
         add_action('wp_ajax_toggle_plugin_favorite', array($this, 'ajax_toggle_favorite'));
-        
-        // Enqueue admin scripts and styles
-        add_action('admin_enqueue_scripts', array($this, 'enqueue_admin_assets'));
-        
+      
         // Set favorites as default view if user has favorites
         add_action('admin_init', array($this, 'set_default_favorites_view'));
     }
@@ -64,38 +61,6 @@ class Plugin_Favorites_Manager {
             wp_redirect(add_query_arg('plugin_status', 'favorites', admin_url('plugins.php')));
             exit;
         }
-    }
-    
-    /**
-     * Enqueue admin JavaScript and CSS
-     */
-    public function enqueue_admin_assets($hook) {
-        // Only load on plugins page
-        if ($hook !== 'plugins.php') {
-            return;
-        }
-        
-        wp_enqueue_style(
-            'plugin-favorites',
-            plugin_dir_url(__FILE__) . 'assets/css/plugin-favorites.css',
-            array(),
-            PLUGIN_FAVORITES_VERSION
-        );
-
-
-        wp_enqueue_script(
-            'plugin-favorites',
-            plugin_dir_url(__FILE__) . 'assets/js/plugin-favorites.js',
-            array('jquery'),
-            PLUGIN_FAVORITES_VERSION,
-            true
-        );
-        
-        wp_localize_script('plugin-favorites', 'pluginFavorites', array(
-            'ajaxurl' => admin_url('admin-ajax.php'),
-            'nonce' => wp_create_nonce('plugin_favorites_nonce')
-        ));
-        
     }
     
     /**
@@ -235,4 +200,9 @@ class Plugin_Favorites_Manager {
 }
 
 // Initialize the plugin
-new Plugin_Favorites_Manager();
+add_action('plugins_loaded', function () {
+    require_once plugin_dir_path(__FILE__) . 'includes/class-assets.php';
+
+    new Plugin_Favorites_Manager();
+    Plugin_Favorites_Assets::init();
+});
