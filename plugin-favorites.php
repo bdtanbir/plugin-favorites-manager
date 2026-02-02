@@ -9,7 +9,6 @@
  * License: GPL v2 or later
  * License URI: https://www.gnu.org/licenses/gpl-2.0.html
  * Text Domain: plugin-favorites
- * Domain Path: /languages/
  */
 
 // Exit if accessed directly
@@ -20,12 +19,11 @@ if (!defined('ABSPATH')) {
 const PLUGIN_FAVORITES_VERSION = '1.0.0';
 
 class Plugin_Favorites_Manager {
-    
+
     private $user_meta_key = 'favorite_plugins';
+    private $all_plugins = null;
     
     public function __construct() {
-        add_action('plugins_loaded', array($this, 'load_textdomain'));
-        
         // Add favorite toggle to plugin rows
         add_filter('plugin_action_links', array($this, 'add_favorite_link'), 10, 4);
         
@@ -37,7 +35,10 @@ class Plugin_Favorites_Manager {
         
         // Handle AJAX toggle favorite
         add_action('wp_ajax_toggle_plugin_favorite', array($this, 'ajax_toggle_favorite'));
-      
+        
+        // Enqueue admin scripts and styles
+        add_action('admin_enqueue_scripts', array($this, 'enqueue_admin_assets'));
+        
         // Set favorites as default view if user has favorites
         add_action('admin_init', array($this, 'set_default_favorites_view'));
     }
@@ -78,6 +79,38 @@ class Plugin_Favorites_Manager {
     }
     
     /**
+     * Enqueue admin JavaScript and CSS
+     */
+    public function enqueue_admin_assets($hook) {
+        // Only load on plugins page
+        if ($hook !== 'plugins.php') {
+            return;
+        }
+        
+        wp_enqueue_style(
+            'plugin-favorites',
+            plugin_dir_url(__FILE__) . 'assets/css/plugin-favorites.css',
+            array(),
+            PLUGIN_FAVORITES_VERSION
+        );
+
+
+        wp_enqueue_script(
+            'plugin-favorites',
+            plugin_dir_url(__FILE__) . 'assets/js/plugin-favorites.js',
+            array('jquery'),
+            PLUGIN_FAVORITES_VERSION,
+            true
+        );
+        
+        wp_localize_script('plugin-favorites', 'pluginFavorites', array(
+            'ajaxurl' => admin_url('admin-ajax.php'),
+            'nonce' => wp_create_nonce('plugin_favorites_nonce')
+        ));
+        
+    }
+    
+    /**
      * Get user's favorite plugins
      */
     private function get_favorites() {
@@ -105,9 +138,7 @@ class Plugin_Favorites_Manager {
             '<a href="#" class="plugin-favorite-link %s" data-plugin="%s" title="%s">%s</a>',
             esc_attr($class),
             esc_attr($plugin_file),
-            $is_favorite
-                ? esc_attr__('Remove from favorites', 'plugin-favorites')
-                : esc_attr__('Add to favorites', 'plugin-favorites'),
+            $is_favorite ? esc_attr__('Remove from favorites', 'plugin-favorites') : esc_attr__('Add to favorites', 'plugin-favorites'),
             $star_icon
         );
         
@@ -123,16 +154,21 @@ class Plugin_Favorites_Manager {
     public function add_favorites_view($views) {
         $favorites = $this->get_favorites();
         $count = count($favorites);
-        
+
+        // Fix counts for other views when on favorites tab
+        if (isset($_GET['plugin_status']) && $_GET['plugin_status'] === 'favorites' && $this->all_plugins !== null) {
+            $views = $this->recalculate_view_counts($views);
+        }
+
         $current_class = '';
         if (isset($_GET['plugin_status']) && $_GET['plugin_status'] === 'favorites') {
             $current_class = 'current';
         }
-        
+
         $favorites_url = add_query_arg(array(
             'plugin_status' => 'favorites'
         ), admin_url('plugins.php'));
-        
+
         $views['favorites'] = sprintf(
             '<a href="%s" class="view-favorites %s">%s <span class="count">(%d)</span></a>',
             esc_url($favorites_url),
@@ -140,7 +176,76 @@ class Plugin_Favorites_Manager {
             __('Favorites', 'plugin-favorites'),
             $count
         );
-        
+
+        return $views;
+    }
+
+    /**
+     * Recalculate view counts based on all plugins (not filtered)
+     */
+    private function recalculate_view_counts($views) {
+        $all_plugins = $this->all_plugins;
+        $active_plugins = get_option('active_plugins', array());
+
+        // Count totals
+        $all_count = count($all_plugins);
+        $active_count = 0;
+        $inactive_count = 0;
+        $auto_updates_disabled_count = 0;
+
+        // Get auto-update settings
+        $auto_updates = get_site_option('auto_update_plugins', array());
+
+        foreach ($all_plugins as $plugin_file => $plugin_data) {
+            if (in_array($plugin_file, $active_plugins)) {
+                $active_count++;
+            } else {
+                $inactive_count++;
+            }
+            // Count plugins with auto-updates disabled (not in the auto-update list)
+            if (!in_array($plugin_file, $auto_updates)) {
+                $auto_updates_disabled_count++;
+            }
+        }
+
+        // Update the counts in existing views using regex to replace the count numbers
+        foreach ($views as $key => &$view) {
+            switch ($key) {
+                case 'all':
+                    $view = preg_replace('/\(\d+\)/', '(' . $all_count . ')', $view);
+                    break;
+                case 'active':
+                    $view = preg_replace('/\(\d+\)/', '(' . $active_count . ')', $view);
+                    break;
+                case 'inactive':
+                    $view = preg_replace('/\(\d+\)/', '(' . $inactive_count . ')', $view);
+                    break;
+                case 'auto-update-disabled':
+                    $view = preg_replace('/\(\d+\)/', '(' . $auto_updates_disabled_count . ')', $view);
+                    break;
+            }
+        }
+
+        // Add inactive view if it was removed (WordPress removes views with 0 count)
+        if (!isset($views['inactive']) && $inactive_count > 0) {
+            $inactive_url = admin_url('plugins.php?plugin_status=inactive');
+            $inactive_view = sprintf(
+                '<a href="%s">%s <span class="count">(%d)</span></a>',
+                esc_url($inactive_url),
+                __('Inactive', 'plugin-favorites'),
+                $inactive_count
+            );
+            // Insert inactive after active to maintain proper order
+            $ordered_views = array();
+            foreach ($views as $key => $view) {
+                $ordered_views[$key] = $view;
+                if ($key === 'active') {
+                    $ordered_views['inactive'] = $inactive_view;
+                }
+            }
+            $views = $ordered_views;
+        }
+
         return $views;
     }
     
@@ -148,17 +253,22 @@ class Plugin_Favorites_Manager {
      * Filter plugins list to show only favorites when tab is active
      */
     public function filter_favorite_plugins($plugins) {
+        // Store the original plugins list for correct count calculations
+        if ($this->all_plugins === null) {
+            $this->all_plugins = $plugins;
+        }
+
         // Only filter when on favorites tab
         if (!isset($_GET['plugin_status']) || $_GET['plugin_status'] !== 'favorites') {
             return $plugins;
         }
-        
+
         $favorites = $this->get_favorites();
-        
+
         if (empty($favorites)) {
             return array();
         }
-        
+
         // Filter to only show favorite plugins
         $filtered_plugins = array();
         foreach ($plugins as $plugin_file => $plugin_data) {
@@ -166,7 +276,7 @@ class Plugin_Favorites_Manager {
                 $filtered_plugins[$plugin_file] = $plugin_data;
             }
         }
-        
+
         return $filtered_plugins;
     }
     
@@ -216,9 +326,4 @@ class Plugin_Favorites_Manager {
 }
 
 // Initialize the plugin
-add_action('plugins_loaded', function () {
-    require_once plugin_dir_path(__FILE__) . 'includes/class-assets.php';
-
-    new Plugin_Favorites_Manager();
-    Plugin_Favorites_Assets::init();
-});
+new Plugin_Favorites_Manager();
